@@ -3,9 +3,13 @@ name: xiaojiang-worker
 # 中心仓库的 worker：服务器上的轮询器把「有人在某个仓库 @ 小酱」写成一条 JSON 评论，
 # 投到本仓库的任务队列 issue（#1）。这个 workflow 读出来，去目标仓库 fork、干活、回帖。
 #
-# 需要两个 secret：
-#   DSH_API_KEY     模型网关的 key（sk- 开头）
-#   XIAOJIANG_PAT   小酱账号的 classic PAT（repo scope）
+# 需要三个 secret：
+#   DSH_API_KEY        模型网关的 key（sk- 开头）
+#   XIAOJIANG_PAT      小酱账号的 classic PAT（repo scope）
+#   XIAOJIANG_APP_KEY  XiaoJiang-CodeAgent 的私钥（回帖显示成 bot）
+#
+# 谁能召唤：仓库变量 COWORKER_ALLOW（逗号分隔的 GitHub 账号），默认只有主人和
+# 小酱自己。轮询器里另有一份 allow.txt，两边都要放行才会执行。
 #
 # 任务载荷（轮询器写进 #1 的评论正文，json 代码块）：
 #   {"target":"owner/repo","number":123,"comment_id":456,"commenter":"login",
@@ -57,7 +61,7 @@ jobs:
           # 队列评论在本仓库（中心仓库）的 issue #1 里，不是目标仓库。
           QUEUE_REPO: ${{ github.repository }}
           COMMENT_ID: ${{ github.event.comment.id }}
-          COWORKER_OPEN: ${{ vars.COWORKER_OPEN || 'true' }}
+          COWORKER_ALLOW: ${{ vars.COWORKER_ALLOW || 'Logic769,XiaoJiang-code' }}
         run: |
           mkdir -p .ci
           BODY=$(gh api "repos/$QUEUE_REPO/issues/comments/$COMMENT_ID" --jq .body)
@@ -70,6 +74,7 @@ jobs:
           TARGET=$(jq -r '.target // empty' .ci/payload.json)
           NUMBER=$(jq -r '.number // empty' .ci/payload.json)
           ASSOC=$(jq -r '.author_association // "NONE"' .ci/payload.json)
+          COMMENT=$(jq -r '.commenter // empty' .ci/payload.json)
           if [ -z "$TARGET" ] || [ -z "$NUMBER" ]; then
             echo '::error::载荷缺 target 或 number'
             exit 1
@@ -77,12 +82,13 @@ jobs:
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
           echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
           echo "assoc=$ASSOC" >> "$GITHUB_OUTPUT"
-          if [ "$COWORKER_OPEN" = "false" ]; then
-            if ! printf '%s' "$ASSOC" | grep -qE '^(OWNER|MEMBER|COLLABORATOR)$'; then
-              echo "::error::只有仓库成员可以召唤小酱（author_association=$ASSOC）"
-              exit 1
-            fi
-          fi
+          # 召唤白名单：逗号分隔，来自仓库变量 COWORKER_ALLOW（默认只有小酱的主人和小酱自己）。
+          ALLOW=$(printf '%s' "$COWORKER_ALLOW" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+          who=$(printf '%s' "$COMMENT" | tr '[:upper:]' '[:lower:]')
+          case ",$ALLOW," in
+            *",$who,"*) echo "allow=ok who=$COMMENT assoc=$ASSOC" ;;
+            *) echo "::error::$COMMENT 不在召唤白名单（COWORKER_ALLOW=$COWORKER_ALLOW），已拒绝"; exit 1 ;;
+          esac
           echo "parsed target=$TARGET number=$NUMBER assoc=$ASSOC"
 
       - name: Fork or reuse
