@@ -522,12 +522,10 @@ jobs:
           export GH_TOKEN="$PAT"
           KIND=issue
           if gh pr view "$NUMBER" --repo "$TARGET" --json number > /dev/null 2>&1; then KIND=pr; fi
+          # 用 REST 而不是 gh issue/pr comment：后者走 GraphQL addComment，
+          # App installation token 在 GraphQL 上会报 Resource not accessible by integration。
           post() {
-            if [ "$KIND" = "pr" ]; then
-              gh pr comment "$NUMBER" --repo "$TARGET" --body-file .ci/body.md
-            else
-              gh issue comment "$NUMBER" --repo "$TARGET" --body-file .ci/body.md
-            fi
+            gh api -X POST "repos/$TARGET/issues/$NUMBER/comments" -F body=@.ci/body.md > /dev/null
           }
           # 优先 App token（显示成 bot）；App 没装到目标仓库时它没权限，退回 PAT。
           if [ -n "$APP_TOKEN" ]; then
