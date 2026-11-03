@@ -137,6 +137,28 @@ jobs:
           git config user.name "xiaojiang"
           git config user.email "{{EMAIL_9am2kw4p}}"
           echo "cloned=$BOT/$NAME head=$(git rev-parse --short HEAD)"
+          # GitHub 的 fork 不会自动跟上游同步，复用的 fork 可能落后很多。
+          # 不拉上游就会拿旧代码干活，所以每次先快进到上游默认分支最新提交。
+          SRC_DEFAULT=$(gh api "repos/$SRC" --jq .default_branch 2>/dev/null || echo main)
+          git remote add upstream "https://github.com/$SRC.git" 2>/dev/null || true
+          if git fetch --depth 50 upstream "$SRC_DEFAULT" 2>/dev/null; then
+            if [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]; then
+              echo "fork_synced=up-to-date head=$(git rev-parse --short HEAD)"
+            else
+              BEFORE=$(git rev-parse --short HEAD)
+              AHEAD=$(git rev-list --count "FETCH_HEAD..HEAD" 2>/dev/null || echo 0)
+              if [ "$AHEAD" != "0" ]; then
+                git branch "fork-local-$BEFORE" HEAD 2>/dev/null || true
+                echo "::warning::fork 默认分支有 $AHEAD 个上游没有的提交，已备份到本地分支 fork-local-$BEFORE"
+              fi
+              git reset --hard FETCH_HEAD > /dev/null
+              BR=$(git rev-parse --abbrev-ref HEAD)
+              git push -f origin "HEAD:$BR" > /dev/null 2>&1 || echo "::warning::同步 fork 远端失败（不影响本轮）"
+              echo "fork_synced=yes $BEFORE -> $(git rev-parse --short HEAD) branch=$BR"
+            fi
+          else
+            echo "::warning::上游 $SRC 的 $SRC_DEFAULT 分支拉不下来，本轮用 fork 现有内容"
+          fi
 
       - name: Prepare memory repo
         env:
