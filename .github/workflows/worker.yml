@@ -54,7 +54,8 @@ jobs:
         id: p
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          QUEUE_REPO: ${{ steps.p.outputs.target }}
+          # 队列评论在本仓库（中心仓库）的 issue #1 里，不是目标仓库。
+          QUEUE_REPO: ${{ github.repository }}
           COMMENT_ID: ${{ github.event.comment.id }}
           COWORKER_OPEN: ${{ vars.COWORKER_OPEN || 'true' }}
         run: |
