@@ -132,14 +132,17 @@ jobs:
             exit 1
           fi
           echo "bot_repo=$BOT/$NAME" >> "$GITHUB_OUTPUT"
+          SRC_DEFAULT=$(gh api "repos/$SRC" --jq .default_branch 2>/dev/null || echo main)
+          echo "src_default=$SRC_DEFAULT"
+          # 让 GitHub 服务端把 fork 快进到上游（本地 push 会被拒：shallow update not allowed）。
+          SYNCMSG=$(gh api -X POST "repos/$BOT/$NAME/merge-upstream" -f branch="$SRC_DEFAULT" --jq .message 2>/dev/null || echo failed)
+          echo "merge_upstream=$SYNCMSG"
           gh repo clone "$BOT/$NAME" fork -- --depth 50
           cd fork
           git config user.name "xiaojiang"
           git config user.email "{{EMAIL_9am2kw4p}}"
           echo "cloned=$BOT/$NAME head=$(git rev-parse --short HEAD)"
-          # GitHub 的 fork 不会自动跟上游同步，复用的 fork 可能落后很多。
-          # 不拉上游就会拿旧代码干活，所以每次先快进到上游默认分支最新提交。
-          SRC_DEFAULT=$(gh api "repos/$SRC" --jq .default_branch 2>/dev/null || echo main)
+          # 服务端同步不成功时，至少把本地工作区拉到上游最新，别拿旧代码干活。
           git remote add upstream "https://github.com/$SRC.git" 2>/dev/null || true
           if git fetch --depth 50 upstream "$SRC_DEFAULT" 2>/dev/null; then
             if [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]; then
@@ -152,9 +155,7 @@ jobs:
                 echo "::warning::fork 默认分支有 $AHEAD 个上游没有的提交，已备份到本地分支 fork-local-$BEFORE"
               fi
               git reset --hard FETCH_HEAD > /dev/null
-              BR=$(git rev-parse --abbrev-ref HEAD)
-              git push -f origin "HEAD:$BR" > /dev/null 2>&1 || echo "::warning::同步 fork 远端失败（不影响本轮）"
-              echo "fork_synced=yes $BEFORE -> $(git rev-parse --short HEAD) branch=$BR"
+              echo "fork_synced=local $BEFORE -> $(git rev-parse --short HEAD)"
             fi
           else
             echo "::warning::上游 $SRC 的 $SRC_DEFAULT 分支拉不下来，本轮用 fork 现有内容"
