@@ -350,8 +350,18 @@ jobs:
           fi
           set +e
           # 以 fork 为工作目录跑：能读代码，也能就地写记忆。
-          ( cd fork && cat "$GITHUB_WORKSPACE/.ci/task.txt" | dsh --profile coworker --patch "$GITHUB_WORKSPACE/.ci/model.patch.yml" --json "${ARGS[@]}" ) > .ci/run.jsonl 2> .ci/run.err
+          run_dsh() {
+            ( cd fork && cat "$GITHUB_WORKSPACE/.ci/task.txt" | dsh --profile coworker --patch "$GITHUB_WORKSPACE/.ci/model.patch.yml" --json "$@" ) > .ci/run.jsonl 2> .ci/run.err
+          }
+          run_dsh "${ARGS[@]}"
           code=$?
+          # 会话记录是绑定工作目录的：换了仓库/目录就会 mismatch。丢弃旧会话重跑一次。
+          if [ "$code" -ne 0 ] && [ ${#ARGS[@]} -gt 0 ] && grep -q "was recorded in" .ci/run.err; then
+            echo "session_cwd_mismatch=1 - 旧会话录在别的目录，丢弃后重跑"
+            : > "$SID_FILE"
+            run_dsh
+            code=$?
+          fi
           set -e
           echo "$code" > .ci/exit
           echo "dsh_exit=$code"
@@ -521,8 +531,9 @@ jobs:
           }
           # 优先 App token（显示成 bot）；App 没装到目标仓库时它没权限，退回 PAT。
           if [ -n "$APP_TOKEN" ]; then
-            if GH_TOKEN="$APP_TOKEN" post 2>/dev/null; then echo "reply_as=app[bot]"; exit 0; fi
-            echo "::warning::App token 回帖失败（目标仓库没装这个 App？），退回 PAT"
+            export GH_TOKEN="$APP_TOKEN"
+            if post 2> .ci/post.err; then echo "reply_as=app[bot]"; exit 0; fi
+            echo "::warning::App token 回帖失败（目标仓库没装这个 App？），退回 PAT：$(tail -c 300 .ci/post.err 2>/dev/null | tr "\n" " ")"
             export GH_TOKEN="$PAT"
           fi
           post
